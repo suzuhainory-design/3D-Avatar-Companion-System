@@ -85,3 +85,4 @@
 - [ ] 集成Babylon.js真实3D渲染引擎：当前3D预览使用CSS模拟，可升级为Babylon.js加载SMPL-X模型，实现真正的3D骨骼动画和参数化变形
 - [ ] 接入TTS语音合成服务：集成ElevenLabs或Azure TTS API，实现数字人语音输出和Wav2Lip唇同步功能
 - [ ] 集成向量数据库实现长期记忆：接入Pinecone或ChromaDB，将对话历史embedding化存储，让数字人能记住用户偏好并生成个性化回应
+- [ ] 为项目仓库添加 .env.example 文件，列出所有必需的环境变量
