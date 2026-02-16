@@ -156,7 +156,10 @@ export default function AvatarAppearance() {
               glbUrl={smplxModel.glbUrl || undefined}
               skeletonParams={avatarQuery.data?.skeletonParams as any}
               skinColor={skin}
-              gender={gender}
+              gender={gender as "male" | "female"}
+              facialParams={facial}
+              genderFeatureParams={genderFeatures}
+              hairParams={avatarQuery.data?.hairParams as any}
             />
           </div>
 
