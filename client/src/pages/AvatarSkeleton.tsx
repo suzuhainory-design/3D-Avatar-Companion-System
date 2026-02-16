@@ -116,6 +116,7 @@ export default function AvatarSkeleton() {
           {/* 3D Preview */}
           <div className="lg:sticky lg:top-20 lg:self-start">
             <AvatarPreview3D
+              glbUrl={avatarQuery.data?.modelFileUrl || undefined}
               skeletonParams={skeleton}
               skinColor={avatarQuery.data?.skinParams as any || undefined}
               gender={avatarQuery.data?.gender || "female"}

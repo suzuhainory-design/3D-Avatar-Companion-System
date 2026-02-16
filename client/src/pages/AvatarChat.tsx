@@ -494,6 +494,7 @@ export default function AvatarChat() {
               <div className="relative">
                 <AvatarPreview3D
                   ref={avatarPreviewRef}
+                  glbUrl={avatar?.modelFileUrl || undefined}
                   skeletonParams={avatar?.skeletonParams as any}
                   skinColor={avatar?.skinParams as any}
                   gender={avatar?.gender || "female"}

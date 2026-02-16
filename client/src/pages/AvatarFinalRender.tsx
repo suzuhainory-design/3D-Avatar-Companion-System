@@ -97,6 +97,7 @@ export default function AvatarFinalRender() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div className="lg:sticky lg:top-20 lg:self-start">
             <AvatarPreview3D
+              glbUrl={avatar?.modelFileUrl || undefined}
               skeletonParams={{ ...(avatar?.skeletonParams as any), height: finalHeight }}
               skinColor={avatar?.skinParams as any}
               gender={avatar?.gender || "female"}

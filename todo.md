@@ -111,3 +111,15 @@
 - [x] 集成：支持对话打断时立即停止音频和动画
 - [x] 编写 TTS 和唇同步相关单元测试（78个测试全部通过）
 - [x] 配置 ElevenLabs API Key 环境变量
+
+## SAM + SMPL-X 真实模型集成（替换占位模型）
+- [x] 将用户提供的 sam_smplx_pipeline Python 包集成到项目后端（uv 管理）
+- [x] 创建 Python 模型转换微服务（FastAPI），暴露 REST API 供 Node.js 后端调用
+- [x] 实现图片→SAM 3D网格→SMPL-X拟合→GLB导出完整流水线
+- [x] 后端 tRPC 路由对接 Python 微服务，处理模型生成请求
+- [x] 升级前端 BabylonScene/AvatarPreview3D 组件，支持加载真实 .glb 模型文件
+- [x] 替换 SMPLXAvatar 占位几何体为真实 SMPL-X 网格（含骨骼/BlendShapes）
+- [x] 更新骨架调整页面，通过 SMPL-X betas 参数驱动真实体型变形
+- [x] 更新外观定制页面，支持真实模型的纹理/材质修改
+- [x] 更新对话页面，加载用户的真实 3D 数字人模型
+- [x] 编写 SAM+SMPL-X 集成相关单元测试（108个测试全部通过）

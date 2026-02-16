@@ -11,6 +11,7 @@ import { storagePut } from "./storage";
 import * as db from "./db";
 import { nanoid } from "nanoid";
 import { synthesizeSpeech, synthesizeSpeechStream, listVoices, validateApiKey, getDefaultVoiceId } from "./tts";
+import { checkModelServiceHealth, fitMeshToGlb, generateGlbFromParams, getModelInfo } from "./modelService";
 
 // ========== Avatar Router ==========
 const avatarRouter = router({
@@ -751,6 +752,125 @@ const ttsRouter = router({
     }),
 });
 
+// ========== Model Service Router ==========
+const modelServiceRouter = router({
+  /** 检查 Python 模型服务健康状态 */
+  health: protectedProcedure.query(async () => {
+    return checkModelServiceHealth();
+  }),
+
+  /** 获取模型服务信息 */
+  info: protectedProcedure.query(async () => {
+    try {
+      return await getModelInfo();
+    } catch {
+      return {
+        model_dir: "unknown",
+        available_genders: [],
+        joint_count: 22,
+        joint_names: [],
+        blendshape_names: [],
+      };
+    }
+  }),
+
+  /** SAM JSON → SMPL-X 拟合 → GLB 导出 */
+  fitMesh: protectedProcedure
+    .input(z.object({
+      meshJsonBase64: z.string(),
+      gender: z.enum(["male", "female", "neutral"]).optional(),
+      targetHeight: z.number().optional(),
+      iterations: z.number().optional(),
+      avatarId: z.number().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const meshBuffer = Buffer.from(input.meshJsonBase64, "base64");
+
+      try {
+        const result = await fitMeshToGlb({
+          meshJsonBuffer: meshBuffer,
+          gender: input.gender,
+          targetHeight: input.targetHeight,
+          iterations: input.iterations,
+          exportGlb: true,
+          includeSkeleton: true,
+          includeBlendshapes: true,
+        });
+
+        if (!result.glbBuffer) {
+          throw new Error("GLB 生成失败");
+        }
+
+        // Upload GLB to S3
+        const glbKey = `models/${ctx.user.id}/avatar-${input.avatarId || nanoid()}.glb`;
+        const { url: glbUrl } = await storagePut(glbKey, result.glbBuffer, "model/gltf-binary");
+
+        // Update avatar record if avatarId provided
+        if (input.avatarId) {
+          await db.updateAvatar(input.avatarId, {
+            modelFileUrl: glbUrl,
+            status: "customizing",
+          });
+        }
+
+        return {
+          success: result.success,
+          glbUrl,
+          fitInfo: result.fitInfo,
+        };
+      } catch (error) {
+        await notifyOwner({
+          title: "模型拟合失败",
+          content: `用户 ${ctx.user.name || ctx.user.openId} 的模型拟合失败: ${error instanceof Error ? error.message : "未知错误"}`,
+        });
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: `模型拟合失败: ${error instanceof Error ? error.message : "未知错误"}`,
+        });
+      }
+    }),
+
+  /** 从参数生成 GLB */
+  generateGlb: protectedProcedure
+    .input(z.object({
+      betas: z.array(z.number()).optional(),
+      bodyPose: z.array(z.number()).optional(),
+      globalOrient: z.array(z.number()).optional(),
+      translation: z.array(z.number()).optional(),
+      scale: z.number().optional(),
+      gender: z.enum(["male", "female", "neutral"]).optional(),
+      skinColor: z.tuple([z.number(), z.number(), z.number(), z.number()]).optional(),
+      avatarId: z.number().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      try {
+        const glbBuffer = await generateGlbFromParams({
+          betas: input.betas,
+          bodyPose: input.bodyPose,
+          globalOrient: input.globalOrient,
+          translation: input.translation,
+          scale: input.scale,
+          gender: input.gender,
+          skinColor: input.skinColor,
+        });
+
+        const glbKey = `models/${ctx.user.id}/avatar-${input.avatarId || nanoid()}.glb`;
+        const { url: glbUrl } = await storagePut(glbKey, glbBuffer, "model/gltf-binary");
+
+        if (input.avatarId) {
+          await db.updateAvatar(input.avatarId, { modelFileUrl: glbUrl });
+        }
+
+        return { glbUrl };
+      } catch (error) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: `GLB 生成失败: ${error instanceof Error ? error.message : "未知错误"}`,
+        });
+      }
+    }),
+});
+
 // ========== Main Router ==========
 export const appRouter = router({
   system: systemRouter,
@@ -769,6 +889,7 @@ export const appRouter = router({
   voice: voiceRouter,
   emotion: emotionRouter,
   tts: ttsRouter,
+  modelService: modelServiceRouter,
 });
 
 export type AppRouter = typeof appRouter;

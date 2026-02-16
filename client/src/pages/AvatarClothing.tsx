@@ -160,6 +160,7 @@ export default function AvatarClothing() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div className="lg:sticky lg:top-20 lg:self-start">
             <AvatarPreview3D
+              glbUrl={avatarQuery.data?.modelFileUrl || undefined}
               skeletonParams={avatarQuery.data?.skeletonParams as any}
               skinColor={avatarQuery.data?.skinParams as any}
               gender={avatarQuery.data?.gender || "female"}
