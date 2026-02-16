@@ -126,7 +126,7 @@ export default function AvatarHair() {
               skeletonParams={avatarQuery.data?.skeletonParams as any}
               skinColor={avatarQuery.data?.skinParams as any}
               gender={avatarQuery.data?.gender || "female"}
-              hairParams={{ length: hair.length, color: hair.baseColor, style: hair.isBald ? "bald" : "normal" }}
+              hairParams={{ length: hair.length, baseColor: hair.baseColor, isBald: hair.isBald, volume: hair.volume, curliness: hair.curliness, tipColor: hair.tipColor, midColor: hair.midColor, useGradient: hair.useGradient, bangsLength: hair.bangsLength }}
             />
           </div>
 

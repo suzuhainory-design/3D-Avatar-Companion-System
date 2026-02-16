@@ -82,7 +82,20 @@
 - [x] LLM对话流程测试
 
 ## 下一阶段：核心功能升级
-- [ ] 集成Babylon.js真实3D渲染引擎：当前3D预览使用CSS模拟，可升级为Babylon.js加载SMPL-X模型，实现真正的3D骨骼动画和参数化变形
+- [x] 集成Babylon.js真实3D渲染引擎：已将CSS模拟替换为Babylon.js v8.51.2 WebGL2引擎，实现参数化人体模型、骨骼动画和实时变形
 - [ ] 接入TTS语音合成服务：集成ElevenLabs或Azure TTS API，实现数字人语音输出和Wav2Lip唇同步功能
 - [ ] 集成向量数据库实现长期记忆：接入Pinecone或ChromaDB，将对话历史embedding化存储，让数字人能记住用户偏好并生成个性化回应
-- [ ] 为项目仓库添加 .env.example 文件，列出所有必需的环境变量
+- [x] 为项目仓库添加 .env.example 文件，列出所有必需的环境变量
+
+## Babylon.js 3D 渲染引擎集成
+- [x] 安装 Babylon.js 核心依赖（@babylonjs/core, @babylonjs/loaders, @babylonjs/materials, @babylonjs/serializers）
+- [x] 创建 Babylon.js 3D 场景核心组件（引擎、场景、相机、灯光）
+- [x] 实现 SMPL-X 模型加载器与骨骼系统（参数化变形）
+- [x] 替换图片上传页面（AvatarUpload）CSS 模拟预览为 Babylon.js 3D 渲染器
+- [x] 替换骨架调整页面（AvatarSkeleton）CSS 模拟预览为 Babylon.js 3D 渲染器
+- [x] 替换外观定制页面（AvatarAppearance）CSS 模拟预览为 Babylon.js 3D 渲染器
+- [x] 替换发型定制页面（AvatarHair）CSS 模拟预览为 Babylon.js 3D 渲染器
+- [x] 替换服装库页面（AvatarClothing）CSS 模拟预览为 Babylon.js 3D 渲染器
+- [x] 替换最终渲染页面（AvatarFinalRender）CSS 模拟预览为 Babylon.js 3D 渲染器
+- [x] 实现对话页面 3D 数字人动画系统（表情、肢体动作、唇同步）
+- [x] 编写 Babylon.js 集成相关单元测试（36个测试全部通过）

@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { AvatarPreview3D } from "@/components/AvatarPreview3D";
+import { AvatarPreview3D, type AvatarPreview3DHandle } from "@/components/AvatarPreview3D";
 import { useLocation, useParams } from "wouter";
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
@@ -78,6 +78,7 @@ export default function AvatarChat() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const avatarPreviewRef = useRef<AvatarPreview3DHandle>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
   const messagesQuery = trpc.chat.getMessages.useQuery(
@@ -313,12 +314,19 @@ export default function AvatarChat() {
             <div className="max-w-xs mx-auto">
               <div className="relative">
                 <AvatarPreview3D
+                  ref={avatarPreviewRef}
                   skeletonParams={avatar?.skeletonParams as any}
                   skinColor={avatar?.skinParams as any}
                   gender={avatar?.gender || "female"}
                   hairParams={avatar?.hairParams as any}
+                  animationState={{
+                    emotion: currentEmotion.emotion,
+                    emotionIntensity: currentEmotion.intensity * 100,
+                    isSpeaking,
+                  }}
                   showControls={false}
-                  className="max-h-[200px]"
+                  compact={true}
+                  className="max-h-[250px]"
                 />
                 {/* Emotion overlay */}
                 {isSpeaking && (

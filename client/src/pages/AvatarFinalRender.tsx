@@ -101,7 +101,7 @@ export default function AvatarFinalRender() {
               skinColor={avatar?.skinParams as any}
               gender={avatar?.gender || "female"}
               hairParams={avatar?.hairParams as any}
-              clothingColor={undefined}
+              clothingParams={undefined}
             />
           </div>
 

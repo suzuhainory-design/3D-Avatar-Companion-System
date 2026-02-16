@@ -1,241 +1,276 @@
-import { useRef, useState, useEffect } from "react";
-import { RotateCcw, ZoomIn, ZoomOut, Move } from "lucide-react";
+/**
+ * AvatarPreview3D - Babylon.js powered 3D avatar preview component
+ * 
+ * Replaces the old CSS/SVG simulation with a real 3D rendering engine.
+ * Uses the SMPL-X parametric model system for body shape, facial features,
+ * hair, clothing, and animation.
+ */
+import { useRef, useState, useEffect, useCallback, useImperativeHandle, forwardRef } from "react";
+import { RotateCcw, ZoomIn, ZoomOut, Camera, Play, Pause } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { BabylonScene, type BabylonSceneRef } from "./BabylonScene";
+import {
+  createSMPLXAvatar,
+  createSpeakingAnimation,
+  createGestureAnimation,
+  type SMPLXAvatarHandle,
+  type SMPLXAvatarConfig,
+  type SkeletonParams,
+  type SkinParams,
+  type FacialParams,
+  type GenderFeatureParams,
+  type HairParams,
+  type ClothingParams,
+  type AvatarAnimationState,
+} from "./SMPLXAvatar";
 
-type AvatarPreview3DProps = {
-  /** 骨架参数 */
-  skeletonParams?: {
-    height?: number;
-    shoulderWidth?: number;
-    hipWidth?: number;
-    armLength?: number;
-    legLength?: number;
-    torsoLength?: number;
-    neckLength?: number;
-  };
-  /** 肤色 */
-  skinColor?: { r: number; g: number; b: number };
-  /** 性别 */
-  gender?: "male" | "female";
-  /** 发型参数 */
-  hairParams?: {
-    length?: number;
-    color?: string;
-    style?: string;
-  };
-  /** 服装颜色 */
-  clothingColor?: { r: number; g: number; b: number };
-  /** 是否显示控制按钮 */
-  showControls?: boolean;
-  /** 容器类名 */
-  className?: string;
+// Re-export types for convenience
+export type {
+  SkeletonParams,
+  SkinParams,
+  FacialParams,
+  GenderFeatureParams,
+  HairParams,
+  ClothingParams,
+  AvatarAnimationState,
 };
 
-export function AvatarPreview3D({
-  skeletonParams,
-  skinColor = { r: 235, g: 200, b: 178 },
-  gender = "female",
-  hairParams,
-  clothingColor,
-  showControls = true,
-  className = "",
-}: AvatarPreview3DProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [rotation, setRotation] = useState({ x: 0, y: 0 });
-  const [zoom, setZoom] = useState(1);
-  const [isDragging, setIsDragging] = useState(false);
-  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+type AvatarPreview3DProps = {
+  /** Skeleton parameters */
+  skeletonParams?: Partial<SkeletonParams>;
+  /** Skin color */
+  skinColor?: Partial<SkinParams>;
+  /** Gender */
+  gender?: "male" | "female";
+  /** Facial parameters */
+  facialParams?: Partial<FacialParams>;
+  /** Gender-specific features */
+  genderFeatureParams?: Partial<GenderFeatureParams>;
+  /** Hair parameters */
+  hairParams?: Partial<HairParams>;
+  /** Clothing parameters */
+  clothingParams?: Partial<ClothingParams>;
+  /** Animation state */
+  animationState?: AvatarAnimationState;
+  /** Whether to show control buttons */
+  showControls?: boolean;
+  /** Container class name */
+  className?: string;
+  /** Compact mode for smaller viewports */
+  compact?: boolean;
+};
 
-  const height = skeletonParams?.height || 170;
-  const shoulderWidth = skeletonParams?.shoulderWidth || 40;
-  const hipWidth = skeletonParams?.hipWidth || 35;
-  const torsoLength = skeletonParams?.torsoLength || 50;
-  const legLength = skeletonParams?.legLength || 80;
-  const neckLength = skeletonParams?.neckLength || 10;
+export type AvatarPreview3DHandle = {
+  setViseme: (index: number) => void;
+  setEmotion: (emotion: string, intensity: number) => void;
+  playGesture: (gesture: string) => void;
+  resetCamera: () => void;
+};
 
-  const skinRgb = `rgb(${skinColor.r}, ${skinColor.g}, ${skinColor.b})`;
-  const skinDarker = `rgb(${Math.max(0, skinColor.r - 30)}, ${Math.max(0, skinColor.g - 30)}, ${Math.max(0, skinColor.b - 30)})`;
-  const clothingRgb = clothingColor
-    ? `rgb(${clothingColor.r}, ${clothingColor.g}, ${clothingColor.b})`
-    : "rgb(60, 80, 120)";
+export const AvatarPreview3D = forwardRef<AvatarPreview3DHandle, AvatarPreview3DProps>(
+  function AvatarPreview3D(
+    {
+      skeletonParams,
+      skinColor,
+      gender = "female",
+      facialParams,
+      genderFeatureParams,
+      hairParams,
+      clothingParams,
+      animationState,
+      showControls = true,
+      className = "",
+      compact = false,
+    },
+    ref
+  ) {
+    const sceneRefHolder = useRef<BabylonSceneRef | null>(null);
+    const avatarRef = useRef<SMPLXAvatarHandle | null>(null);
+    const [isAnimating, setIsAnimating] = useState(true);
 
-  const hairColor = hairParams?.color || "#2a1a0a";
-  const hairLength = hairParams?.length || 20;
+    // Build config from props
+    const configRef = useRef<SMPLXAvatarConfig>({});
+    configRef.current = {
+      skeleton: skeletonParams,
+      skin: skinColor,
+      gender,
+      facial: facialParams,
+      genderFeatures: genderFeatureParams,
+      hair: hairParams,
+      clothing: clothingParams,
+      animation: animationState,
+    };
 
-  // Scale factor to fit in viewport
-  const scale = (200 / height) * zoom;
-
-  const handleMouseDown = (e: React.MouseEvent) => {
-    setIsDragging(true);
-    setDragStart({ x: e.clientX, y: e.clientY });
-  };
-
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (!isDragging) return;
-    const dx = e.clientX - dragStart.x;
-    const dy = e.clientY - dragStart.y;
-    setRotation((prev) => ({
-      x: prev.x + dy * 0.5,
-      y: prev.y + dx * 0.5,
+    // Expose handle methods
+    useImperativeHandle(ref, () => ({
+      setViseme: (index: number) => avatarRef.current?.setViseme(index),
+      setEmotion: (emotion: string, intensity: number) =>
+        avatarRef.current?.setEmotion(emotion, intensity),
+      playGesture: (gesture: string) => {
+        if (!sceneRefHolder.current || !avatarRef.current?.rootNode) return;
+        const gestureAnim = createGestureAnimation(
+          sceneRefHolder.current.scene,
+          avatarRef.current.rootNode,
+          gesture
+        );
+        gestureAnim.play(false);
+        gestureAnim.onAnimationGroupEndObservable.addOnce(() => gestureAnim.dispose());
+      },
+      resetCamera: () => {
+        if (sceneRefHolder.current) {
+          const cam = sceneRefHolder.current.camera;
+          cam.alpha = Math.PI / 2;
+          cam.beta = Math.PI / 2.5;
+          cam.radius = 3;
+        }
+      },
     }));
-    setDragStart({ x: e.clientX, y: e.clientY });
-  };
 
-  const handleMouseUp = () => setIsDragging(false);
+    // Rebuild avatar when config changes
+    useEffect(() => {
+      if (!sceneRefHolder.current) return;
+      const { scene, shadowGenerator } = sceneRefHolder.current;
 
-  return (
-    <div className={`relative select-none ${className}`}>
-      {/* 3D Viewport */}
-      <div
-        ref={containerRef}
-        className="w-full aspect-[3/4] bg-surface-1 rounded-xl border border-border overflow-hidden relative"
-        style={{ perspective: "800px" }}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
-      >
-        {/* Grid floor */}
-        <div className="absolute inset-0 bg-grid opacity-20" />
+      // Dispose old avatar
+      if (avatarRef.current) {
+        avatarRef.current.dispose();
+        avatarRef.current = null;
+      }
 
-        {/* Avatar figure */}
+      // Create new avatar
+      const handle = createSMPLXAvatar(scene, configRef.current, shadowGenerator);
+      avatarRef.current = handle;
+
+      return () => {
+        if (avatarRef.current) {
+          avatarRef.current.dispose();
+          avatarRef.current = null;
+        }
+      };
+    }, [
+      // Stringify params to detect deep changes
+      JSON.stringify(skeletonParams),
+      JSON.stringify(skinColor),
+      gender,
+      JSON.stringify(facialParams),
+      JSON.stringify(genderFeatureParams),
+      JSON.stringify(hairParams),
+      JSON.stringify(clothingParams),
+    ]);
+
+    // Handle animation state changes
+    useEffect(() => {
+      if (!avatarRef.current || !animationState) return;
+
+      if (animationState.emotion && animationState.emotionIntensity != null) {
+        avatarRef.current.setEmotion(animationState.emotion, animationState.emotionIntensity);
+      }
+      if (animationState.visemeIndex != null) {
+        avatarRef.current.setViseme(animationState.visemeIndex);
+      }
+    }, [animationState?.emotion, animationState?.emotionIntensity, animationState?.visemeIndex]);
+
+    const handleSceneReady = useCallback((sceneRef: BabylonSceneRef) => {
+      sceneRefHolder.current = sceneRef;
+
+      // Create initial avatar
+      const handle = createSMPLXAvatar(
+        sceneRef.scene,
+        configRef.current,
+        sceneRef.shadowGenerator
+      );
+      avatarRef.current = handle;
+    }, []);
+
+    const handleResetCamera = useCallback(() => {
+      if (sceneRefHolder.current) {
+        const cam = sceneRefHolder.current.camera;
+        cam.alpha = Math.PI / 2;
+        cam.beta = Math.PI / 2.5;
+        cam.radius = 3;
+      }
+    }, []);
+
+    const handleZoomIn = useCallback(() => {
+      if (sceneRefHolder.current) {
+        const cam = sceneRefHolder.current.camera;
+        cam.radius = Math.max(cam.lowerRadiusLimit || 1.5, cam.radius - 0.5);
+      }
+    }, []);
+
+    const handleZoomOut = useCallback(() => {
+      if (sceneRefHolder.current) {
+        const cam = sceneRefHolder.current.camera;
+        cam.radius = Math.min(cam.upperRadiusLimit || 8, cam.radius + 0.5);
+      }
+    }, []);
+
+    const height = skeletonParams?.height || 170;
+
+    return (
+      <div className={`relative select-none ${className}`}>
+        {/* 3D Viewport */}
         <div
-          className="absolute inset-0 flex items-center justify-center"
-          style={{
-            transform: `rotateX(${rotation.x}deg) rotateY(${rotation.y}deg) scale(${scale / 200})`,
-            transformStyle: "preserve-3d",
-            transition: isDragging ? "none" : "transform 0.1s ease-out",
-          }}
+          className={`w-full rounded-xl border border-border overflow-hidden relative bg-surface-1 ${
+            compact ? "aspect-square" : "aspect-[3/4]"
+          }`}
         >
-          <svg
-            viewBox="0 0 200 400"
-            className="w-full h-full max-w-[200px]"
-            style={{ filter: "drop-shadow(0 0 20px rgba(0,200,255,0.15))" }}
-          >
-            {/* Hair */}
-            <ellipse
-              cx="100"
-              cy={60 - hairLength * 0.1}
-              rx={28 + hairLength * 0.1}
-              ry={25 + hairLength * 0.3}
-              fill={hairColor}
-              opacity="0.9"
-            />
-
-            {/* Head */}
-            <ellipse cx="100" cy="65" rx="22" ry="26" fill={skinRgb} />
-            {/* Eyes */}
-            <ellipse cx="90" cy="60" rx="4" ry="2.5" fill="#1a1a2e" />
-            <ellipse cx="110" cy="60" rx="4" ry="2.5" fill="#1a1a2e" />
-            <circle cx="91" cy="59.5" r="1" fill="white" />
-            <circle cx="111" cy="59.5" r="1" fill="white" />
-            {/* Nose */}
-            <path d="M98 66 L100 72 L102 66" fill="none" stroke={skinDarker} strokeWidth="1" />
-            {/* Mouth */}
-            <path d="M93 78 Q100 83 107 78" fill="none" stroke="#c47070" strokeWidth="1.5" />
-
-            {/* Neck */}
-            <rect
-              x="93"
-              y="90"
-              width="14"
-              height={neckLength * 0.3 + 8}
-              rx="4"
-              fill={skinRgb}
-            />
-
-            {/* Torso / Clothing */}
-            <path
-              d={`M${100 - shoulderWidth * 0.7} ${100 + neckLength * 0.3}
-                  L${100 + shoulderWidth * 0.7} ${100 + neckLength * 0.3}
-                  L${100 + hipWidth * 0.6} ${100 + neckLength * 0.3 + torsoLength * 1.2}
-                  L${100 - hipWidth * 0.6} ${100 + neckLength * 0.3 + torsoLength * 1.2} Z`}
-              fill={clothingRgb}
-              stroke={clothingRgb}
-              strokeWidth="1"
-              rx="5"
-            />
-
-            {/* Arms */}
-            <line
-              x1={100 - shoulderWidth * 0.7}
-              y1={105 + neckLength * 0.3}
-              x2={100 - shoulderWidth * 0.7 - 15}
-              y2={105 + neckLength * 0.3 + legLength * 0.6}
-              stroke={skinRgb}
-              strokeWidth="10"
-              strokeLinecap="round"
-            />
-            <line
-              x1={100 + shoulderWidth * 0.7}
-              y1={105 + neckLength * 0.3}
-              x2={100 + shoulderWidth * 0.7 + 15}
-              y2={105 + neckLength * 0.3 + legLength * 0.6}
-              stroke={skinRgb}
-              strokeWidth="10"
-              strokeLinecap="round"
-            />
-
-            {/* Legs */}
-            <line
-              x1={100 - hipWidth * 0.3}
-              y1={100 + neckLength * 0.3 + torsoLength * 1.2}
-              x2={100 - hipWidth * 0.3 - 3}
-              y2={100 + neckLength * 0.3 + torsoLength * 1.2 + legLength * 1.2}
-              stroke="#2a3555"
-              strokeWidth="12"
-              strokeLinecap="round"
-            />
-            <line
-              x1={100 + hipWidth * 0.3}
-              y1={100 + neckLength * 0.3 + torsoLength * 1.2}
-              x2={100 + hipWidth * 0.3 + 3}
-              y2={100 + neckLength * 0.3 + torsoLength * 1.2 + legLength * 1.2}
-              stroke="#2a3555"
-              strokeWidth="12"
-              strokeLinecap="round"
-            />
-          </svg>
-        </div>
-
-        {/* Height indicator */}
-        <div className="absolute bottom-3 left-3 text-xs text-muted-foreground font-mono">
-          {height}cm
-        </div>
-      </div>
-
-      {/* Controls */}
-      {showControls && (
-        <div className="absolute top-3 right-3 flex flex-col gap-1.5">
-          <Button
-            variant="outline"
-            size="icon"
-            className="w-8 h-8 bg-background/80 backdrop-blur-sm"
-            onClick={() => setZoom((z) => Math.min(z + 0.2, 3))}
-          >
-            <ZoomIn className="w-3.5 h-3.5" />
-          </Button>
-          <Button
-            variant="outline"
-            size="icon"
-            className="w-8 h-8 bg-background/80 backdrop-blur-sm"
-            onClick={() => setZoom((z) => Math.max(z - 0.2, 0.5))}
-          >
-            <ZoomOut className="w-3.5 h-3.5" />
-          </Button>
-          <Button
-            variant="outline"
-            size="icon"
-            className="w-8 h-8 bg-background/80 backdrop-blur-sm"
-            onClick={() => {
-              setRotation({ x: 0, y: 0 });
-              setZoom(1);
+          <BabylonScene
+            onSceneReady={handleSceneReady}
+            showGrid={true}
+            enableGlow={true}
+            cameraSettings={{
+              alpha: Math.PI / 2,
+              beta: Math.PI / 2.5,
+              radius: 3,
+              target: { x: 0, y: 0.9, z: 0 },
             }}
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-          </Button>
+          />
+
+          {/* Height indicator */}
+          <div className="absolute bottom-3 left-3 text-xs text-muted-foreground font-mono bg-background/60 px-2 py-1 rounded-md backdrop-blur-sm">
+            {height}cm
+          </div>
+
+          {/* 3D Engine badge */}
+          <div className="absolute bottom-3 right-3 text-[10px] text-muted-foreground/50 font-mono">
+            Babylon.js • SMPL-X
+          </div>
         </div>
-      )}
-    </div>
-  );
-}
+
+        {/* Controls */}
+        {showControls && (
+          <div className="absolute top-3 right-3 flex flex-col gap-1.5">
+            <Button
+              variant="outline"
+              size="icon"
+              className="w-8 h-8 bg-background/80 backdrop-blur-sm"
+              onClick={handleZoomIn}
+              title="放大"
+            >
+              <ZoomIn className="w-3.5 h-3.5" />
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              className="w-8 h-8 bg-background/80 backdrop-blur-sm"
+              onClick={handleZoomOut}
+              title="缩小"
+            >
+              <ZoomOut className="w-3.5 h-3.5" />
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              className="w-8 h-8 bg-background/80 backdrop-blur-sm"
+              onClick={handleResetCamera}
+              title="重置视角"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+            </Button>
+          </div>
+        )}
+      </div>
+    );
+  }
+);

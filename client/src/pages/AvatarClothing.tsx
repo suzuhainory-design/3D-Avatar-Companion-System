@@ -164,7 +164,7 @@ export default function AvatarClothing() {
               skinColor={avatarQuery.data?.skinParams as any}
               gender={avatarQuery.data?.gender || "female"}
               hairParams={avatarQuery.data?.hairParams as any}
-              clothingColor={clothingColor}
+              clothingParams={{ topColor: clothingColor, bottomColor: clothingColor }}
             />
           </div>
 
