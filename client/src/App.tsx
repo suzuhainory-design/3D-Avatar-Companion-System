@@ -12,6 +12,7 @@ import AvatarHair from "./pages/AvatarHair";
 import AvatarClothing from "./pages/AvatarClothing";
 import AvatarFinalRender from "./pages/AvatarFinalRender";
 import AvatarChat from "./pages/AvatarChat";
+import AvatarMemory from "./pages/AvatarMemory";
 
 function Router() {
   return (
@@ -32,6 +33,8 @@ function Router() {
       {/* 模块6: 3D数字人对话交互 */}
       <Route path="/avatar/:id/chat" component={AvatarChat} />
       <Route path="/avatar/:id/chat/:sessionId" component={AvatarChat} />
+      {/* 模块7: 记忆管理与缓存 */}
+      <Route path="/avatar/:id/memory" component={AvatarMemory} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>

@@ -12,6 +12,8 @@ import * as db from "./db";
 import { nanoid } from "nanoid";
 import { synthesizeSpeech, synthesizeSpeechStream, listVoices, validateApiKey, getDefaultVoiceId } from "./tts";
 import { checkModelServiceHealth, fitMeshToGlb, generateGlbFromParams, getModelInfo } from "./modelService";
+import { buildMemoryContext, extractMemoriesFromConversation, searchMemories, getAllMemories, addManualMemory, deleteMemory, clearMemories, getMemoryStats } from "./vectorMemory";
+import { buildCacheKey, getCachedModel, cacheModel, invalidateCache, getCacheStats, clearUserCache } from "./modelCache";
 
 // ========== Avatar Router ==========
 const avatarRouter = router({
@@ -325,11 +327,12 @@ const chatRouter = router({
       return db.getSessionMessages(input.sessionId, input.limit || 50);
     }),
 
-  /** 发送消息并获取LLM回复（含情绪分析） */
+  /** 发送消息并获取LLM回复（含情绪分析 + 长期记忆） */
   sendMessage: protectedProcedure
     .input(z.object({
       sessionId: z.number(),
       content: z.string(),
+      avatarId: z.number().optional(),
       attachments: z.array(z.object({
         url: z.string(),
         name: z.string(),
@@ -353,15 +356,25 @@ const chatRouter = router({
       // Get conversation history
       const history = await db.getSessionMessages(input.sessionId, 20);
 
-      // Build LLM messages with multimodal support
-      const llmMessages: any[] = [
-        {
-          role: "system" as const,
-          content: `你是一个友好的3D数字人伴侣。请用自然、有情感的方式回应用户。
+      // Build memory context if avatarId is provided
+      let memoryContextText = "";
+      const avatarId = input.avatarId || session.avatarId;
+      if (avatarId) {
+        try {
+          const memoryCtx = await buildMemoryContext(ctx.user.id, avatarId, input.content);
+          memoryContextText = memoryCtx.formattedContext;
+        } catch (e) {
+          console.warn("[Chat] Memory context build failed:", e);
+        }
+      }
+
+      // Build LLM messages with multimodal support + memory
+      const systemPrompt = `你是一个友好的3D数字人伴侣。请用自然、有情感的方式回应用户。
+${memoryContextText ? `\n你拥有以下关于用户的长期记忆，请在回应中自然地运用这些信息：${memoryContextText}` : ""}
 在回复的末尾，请用JSON格式附加情绪分析：
-[EMOTION]{"emotion":"happy|sad|surprised|angry|neutral|thinking|excited","intensity":0.0-1.0,"description":"简短描述"}[/EMOTION]`,
-        },
-      ];
+[EMOTION]{"emotion":"happy|sad|surprised|angry|neutral|thinking|excited","intensity":0.0-1.0,"description":"简短描述"}[/EMOTION]`;
+
+      const llmMessages: any[] = [{ role: "system" as const, content: systemPrompt }];
 
       for (const msg of history) {
         const msgContent: any[] = [{ type: "text", text: msg.content }];
@@ -422,10 +435,20 @@ const chatRouter = router({
           emotionAnalysis,
         });
 
+        // Async: extract memories from conversation (non-blocking)
+        if (avatarId && history.length >= 4) {
+          const existingMemories = await getAllMemories(ctx.user.id, avatarId).catch(() => []);
+          const recentMsgs = [...history.slice(-6), { role: "user", content: input.content }, { role: "assistant", content: displayContent }];
+          extractMemoriesFromConversation(ctx.user.id, avatarId, recentMsgs, existingMemories).catch(e =>
+            console.warn("[Chat] Async memory extraction failed:", e)
+          );
+        }
+
         return {
           id: msgId,
           content: displayContent,
           emotionAnalysis,
+          memoryUsed: memoryContextText.length > 0,
         };
       } catch (error) {
         await notifyOwner({
@@ -639,15 +662,24 @@ const ttsRouter = router({
       // Get conversation history
       const history = await db.getSessionMessages(input.sessionId, 20);
 
-      // Build LLM messages
-      const llmMessages: any[] = [
-        {
-          role: "system" as const,
-          content: `你是一个友好的3D数字人伴侣。请用自然、有情感的方式回应用户。
+      // Build memory context
+      let memoryContextText = "";
+      const avatarId = session.avatarId;
+      if (avatarId) {
+        try {
+          const memoryCtx = await buildMemoryContext(ctx.user.id, avatarId, input.content);
+          memoryContextText = memoryCtx.formattedContext;
+        } catch (e) {
+          console.warn("[ChatWithVoice] Memory context build failed:", e);
+        }
+      }
+
+      // Build LLM messages with memory
+      const systemPrompt = `你是一个友好的3D数字人伴侣。请用自然、有情感的方式回应用户。
+${memoryContextText ? `\n你拥有以下关于用户的长期记忆，请在回应中自然地运用这些信息：${memoryContextText}` : ""}
 在回复的末尾，请用JSON格式附加情绪分析：
-[EMOTION]{"emotion":"happy|sad|surprised|angry|neutral|thinking|excited","intensity":0.0-1.0,"description":"简短描述"}[/EMOTION]`,
-        },
-      ];
+[EMOTION]{"emotion":"happy|sad|surprised|angry|neutral|thinking|excited","intensity":0.0-1.0,"description":"简短描述"}[/EMOTION]`;
+      const llmMessages: any[] = [{ role: "system" as const, content: systemPrompt }];
 
       for (const msg of history) {
         const msgContent: any[] = [{ type: "text", text: msg.content }];
@@ -731,6 +763,15 @@ const ttsRouter = router({
           emotionAnalysis,
         });
 
+        // Async: extract memories from conversation (non-blocking)
+        if (avatarId && history.length >= 4) {
+          const existingMemories = await getAllMemories(ctx.user.id, avatarId).catch(() => []);
+          const recentMsgs = [...history.slice(-6), { role: "user", content: input.content }, { role: "assistant", content: displayContent }];
+          extractMemoriesFromConversation(ctx.user.id, avatarId, recentMsgs, existingMemories).catch(e =>
+            console.warn("[ChatWithVoice] Async memory extraction failed:", e)
+          );
+        }
+
         return {
           id: msgId,
           content: displayContent,
@@ -738,6 +779,7 @@ const ttsRouter = router({
           audioUrl,
           visemeTimeline,
           audioDuration,
+          memoryUsed: memoryContextText.length > 0,
         };
       } catch (error) {
         await notifyOwner({
@@ -830,7 +872,7 @@ const modelServiceRouter = router({
       }
     }),
 
-  /** 从参数生成 GLB */
+  /** 从参数生成 GLB（带 S3 缓存） */
   generateGlb: protectedProcedure
     .input(z.object({
       betas: z.array(z.number()).optional(),
@@ -841,9 +883,35 @@ const modelServiceRouter = router({
       gender: z.enum(["male", "female", "neutral"]).optional(),
       skinColor: z.tuple([z.number(), z.number(), z.number(), z.number()]).optional(),
       avatarId: z.number().optional(),
+      skipCache: z.boolean().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       try {
+        // Build cache key from params
+        const cacheParams = {
+          betas: input.betas,
+          bodyPose: input.bodyPose,
+          globalOrient: input.globalOrient,
+          translation: input.translation,
+          scale: input.scale,
+          gender: input.gender,
+          skinColor: input.skinColor,
+        };
+        const cacheKey = buildCacheKey("smplx_fit", ctx.user.id, cacheParams);
+
+        // Check cache first (unless skipCache)
+        if (!input.skipCache) {
+          const cached = await getCachedModel(cacheKey);
+          if (cached.hit && cached.modelUrl) {
+            // Update avatar record if needed
+            if (input.avatarId) {
+              await db.updateAvatar(input.avatarId, { modelFileUrl: cached.modelUrl });
+            }
+            return { glbUrl: cached.modelUrl, fromCache: true };
+          }
+        }
+
+        // Cache miss - generate new GLB
         const glbBuffer = await generateGlbFromParams({
           betas: input.betas,
           bodyPose: input.bodyPose,
@@ -854,14 +922,21 @@ const modelServiceRouter = router({
           skinColor: input.skinColor,
         });
 
-        const glbKey = `models/${ctx.user.id}/avatar-${input.avatarId || nanoid()}.glb`;
-        const { url: glbUrl } = await storagePut(glbKey, glbBuffer, "model/gltf-binary");
+        // Store in cache (uploads to S3 automatically)
+        const { modelUrl: glbUrl } = await cacheModel({
+          cacheKey,
+          userId: ctx.user.id,
+          avatarId: input.avatarId,
+          cacheType: "smplx_fit",
+          modelData: glbBuffer,
+          params: cacheParams,
+        });
 
         if (input.avatarId) {
           await db.updateAvatar(input.avatarId, { modelFileUrl: glbUrl });
         }
 
-        return { glbUrl };
+        return { glbUrl, fromCache: false };
       } catch (error) {
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
@@ -869,6 +944,112 @@ const modelServiceRouter = router({
         });
       }
     }),
+});
+
+// ========== Memory Router ==========
+const memoryRouter = router({
+  /** 获取指定数字人的所有记忆 */
+  list: protectedProcedure
+    .input(z.object({ avatarId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      const memories = await getAllMemories(ctx.user.id, input.avatarId);
+      return memories.map(m => ({
+        id: m.id,
+        type: m.type,
+        content: m.content,
+        importance: m.importance,
+        accessCount: m.accessCount,
+        createdAt: m.createdAt,
+        lastAccessedAt: m.lastAccessedAt,
+      }));
+    }),
+
+  /** 搜索相关记忆 */
+  search: protectedProcedure
+    .input(z.object({
+      avatarId: z.number(),
+      query: z.string(),
+      topK: z.number().optional(),
+    }))
+    .query(async ({ ctx, input }) => {
+      const results = await searchMemories(ctx.user.id, input.avatarId, input.query, {
+        topK: input.topK || 5,
+      });
+      return results.map(r => ({
+        id: r.entry.id,
+        type: r.entry.type,
+        content: r.entry.content,
+        importance: r.entry.importance,
+        similarity: r.similarity,
+      }));
+    }),
+
+  /** 手动添加记忆 */
+  add: protectedProcedure
+    .input(z.object({
+      avatarId: z.number(),
+      type: z.enum(["user_preference", "key_fact", "emotional_pattern", "personality_trait", "conversation_summary"]),
+      content: z.string(),
+      importance: z.number().min(0).max(1).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const id = await addManualMemory(
+        ctx.user.id,
+        input.avatarId,
+        input.type,
+        input.content,
+        input.importance,
+      );
+      return { id, success: true };
+    }),
+
+  /** 删除单条记忆 */
+  delete: protectedProcedure
+    .input(z.object({ memoryId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const success = await deleteMemory(input.memoryId, ctx.user.id);
+      return { success };
+    }),
+
+  /** 清除指定数字人的所有记忆 */
+  clear: protectedProcedure
+    .input(z.object({ avatarId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      const success = await clearMemories(ctx.user.id, input.avatarId);
+      return { success };
+    }),
+
+  /** 获取记忆统计信息 */
+  stats: protectedProcedure
+    .input(z.object({ avatarId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      return getMemoryStats(ctx.user.id, input.avatarId);
+    }),
+});
+
+// ========== Cache Router ==========
+const cacheRouter = router({
+  /** 获取缓存统计信息 */
+  stats: protectedProcedure.query(async ({ ctx }) => {
+    return getCacheStats(ctx.user.id);
+  }),
+
+  /** 失效指定数字人的缓存 */
+  invalidate: protectedProcedure
+    .input(z.object({
+      avatarId: z.number(),
+      cacheType: z.enum(["smplx_fit", "clothing_render", "final_render"]).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const deleted = await invalidateCache(ctx.user.id, input.avatarId, input.cacheType);
+      return { deleted };
+    }),
+
+  /** 清除用户所有缓存 */
+  clearAll: protectedProcedure.mutation(async ({ ctx }) => {
+    const deleted = await clearUserCache(ctx.user.id);
+    return { deleted };
+  }),
 });
 
 // ========== Main Router ==========
@@ -890,6 +1071,8 @@ export const appRouter = router({
   emotion: emotionRouter,
   tts: ttsRouter,
   modelService: modelServiceRouter,
+  memory: memoryRouter,
+  cache: cacheRouter,
 });
 
 export type AppRouter = typeof appRouter;

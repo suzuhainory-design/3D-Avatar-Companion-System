@@ -15,6 +15,13 @@
       "when": 1771232422236,
       "tag": "0001_condemned_khan",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1771251315600,
+      "tag": "0002_motionless_the_order",
+      "breakpoints": true
     }
   ]
 }

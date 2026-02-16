@@ -209,3 +209,64 @@ export const userPreferences = mysqlTable("userPreferences", {
 
 export type UserPreference = typeof userPreferences.$inferSelect;
 export type InsertUserPreference = typeof userPreferences.$inferInsert;
+
+/**
+ * 向量记忆表 - 存储对话embedding用于长期记忆和语义检索
+ */
+export const memoryVectors = mysqlTable("memory_vectors", {
+  id: varchar("id", { length: 64 }).primaryKey(),
+  userId: int("userId").notNull(),
+  avatarId: int("avatarId").notNull(),
+  /** 记忆类型 */
+  type: mysqlEnum("type", ["conversation_summary", "user_preference", "emotional_pattern", "key_fact", "personality_trait"]).notNull(),
+  /** 原始文本内容 */
+  content: text("content").notNull(),
+  /** embedding向量 JSON数组 */
+  embedding: json("embedding").notNull(),
+  /** 元数据 JSON */
+  metadata: json("metadata"),
+  /** 重要性评分 0-1 */
+  importance: float("importance").default(0.5).notNull(),
+  /** 访问次数 */
+  accessCount: int("accessCount").default(0).notNull(),
+  /** 最后访问时间 (Unix timestamp ms) */
+  lastAccessedAt: bigint("lastAccessedAt", { mode: "number" }).notNull(),
+  /** 创建时间 (Unix timestamp ms) */
+  createdAt: bigint("createdAt", { mode: "number" }).notNull(),
+});
+
+export type MemoryVector = typeof memoryVectors.$inferSelect;
+export type InsertMemoryVector = typeof memoryVectors.$inferInsert;
+
+/**
+ * 模型缓存表 - 缓存已生成的GLB模型文件避免重复拟合计算
+ */
+export const modelCache = mysqlTable("model_cache", {
+  id: int("id").autoincrement().primaryKey(),
+  /** 缓存键（基于输入参数的hash） */
+  cacheKey: varchar("cacheKey", { length: 128 }).notNull().unique(),
+  userId: int("userId").notNull(),
+  avatarId: int("avatarId"),
+  /** 缓存类型: smplx_fit / clothing_render / final_render */
+  cacheType: mysqlEnum("cacheType", ["smplx_fit", "clothing_render", "final_render"]).notNull(),
+  /** GLB模型文件S3 URL */
+  modelUrl: text("modelUrl").notNull(),
+  /** S3 key */
+  modelKey: varchar("modelKey", { length: 512 }).notNull(),
+  /** 输入参数hash（用于验证缓存有效性） */
+  paramsHash: varchar("paramsHash", { length: 64 }).notNull(),
+  /** 输入参数快照 JSON */
+  paramsSnapshot: json("paramsSnapshot"),
+  /** 文件大小(bytes) */
+  fileSize: bigint("fileSize", { mode: "number" }),
+  /** 缓存命中次数 */
+  hitCount: int("hitCount").default(0).notNull(),
+  /** 最后命中时间 */
+  lastHitAt: timestamp("lastHitAt"),
+  /** 过期时间 */
+  expiresAt: timestamp("expiresAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ModelCache = typeof modelCache.$inferSelect;
+export type InsertModelCache = typeof modelCache.$inferInsert;
