@@ -1,0 +1,19 @@
+## 2026-02-16 SMPL-X 真实模型渲染验证
+
+### 结果：成功！
+- 页面显示 "SMPL-X 真实模型" 绿色标签
+- 状态栏显示 "Babylon.js • GLB" 和 "SMPL-X 真实模型已加载"
+- 3D 预览区域显示了真实的 SMPL-X 女性人体模型（T-pose，带肤色）
+- 模型有正确的人体比例、面部特征、手指等细节
+- 网格渲染正确，无破面或穿模
+
+### 修复内容
+1. glb_exporter.py: JSON chunk padding 从 \x00 改为空格 (0x20)
+2. modelCache.ts: 从原始 SQL 改为 Drizzle ORM 标准查询
+3. 清除了旧的错误缓存数据
+4. 清除了数字人记录中的旧 modelFileUrl
+
+### 当前状态
+- Python 微服务在线，smplx_available=true
+- 模型生成耗时约 6 秒
+- 新 GLB URL: smplx_fit-QR17dZxp.glb

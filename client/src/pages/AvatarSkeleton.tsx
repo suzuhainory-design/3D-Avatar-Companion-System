@@ -6,9 +6,10 @@ import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
 import { StepNavigation, AVATAR_CREATION_STEPS } from "@/components/StepNavigation";
 import { AvatarPreview3D } from "@/components/AvatarPreview3D";
+import { useSmplxModel, skinParamsToColor } from "@/hooks/useSmplxModel";
 import { useLocation, useParams } from "wouter";
 import { useState, useEffect } from "react";
-import { ArrowLeft, Loader2, RotateCcw } from "lucide-react";
+import { ArrowLeft, Loader2, RotateCcw, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 
 type SkeletonParams = {
@@ -56,6 +57,16 @@ export default function AvatarSkeleton() {
     }
   }, [avatarQuery.data]);
 
+  // Use SMPL-X model hook for real model generation
+  const smplxModel = useSmplxModel({
+    avatarId,
+    gender: (avatarQuery.data?.gender as "male" | "female") || "female",
+    existingGlbUrl: avatarQuery.data?.modelFileUrl || null,
+    skeletonParams: skeleton,
+    skinColor: skinParamsToColor(avatarQuery.data?.skinParams),
+    debounceMs: 1200, // Longer debounce for skeleton adjustments
+  });
+
   const handleParamChange = (key: keyof SkeletonParams, value: number) => {
     setSkeleton((prev) => ({ ...prev, [key]: value }));
   };
@@ -69,12 +80,16 @@ export default function AvatarSkeleton() {
         paramsSnapshot: { skeletonParams: skeleton },
         stepOrder: 1,
       });
-      // Update avatar
-      await updateMutation.mutateAsync({
+      // Update avatar with new skeleton params and model URL if generated
+      const updateData: any = {
         id: avatarId,
         skeletonParams: skeleton,
         currentStep: "appearance",
-      });
+      };
+      if (smplxModel.glbUrl && !avatarQuery.data?.modelFileUrl) {
+        updateData.modelFileUrl = smplxModel.glbUrl;
+      }
+      await updateMutation.mutateAsync(updateData);
       navigate(`/avatar/${avatarId}/appearance`);
     } catch {
       toast.error("保存失败，请重试");
@@ -116,11 +131,51 @@ export default function AvatarSkeleton() {
           {/* 3D Preview */}
           <div className="lg:sticky lg:top-20 lg:self-start">
             <AvatarPreview3D
-              glbUrl={avatarQuery.data?.modelFileUrl || undefined}
+              glbUrl={smplxModel.glbUrl || undefined}
               skeletonParams={skeleton}
               skinColor={avatarQuery.data?.skinParams as any || undefined}
               gender={avatarQuery.data?.gender || "female"}
             />
+
+            {/* Model generation status */}
+            {smplxModel.serviceOnline && (
+              <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+                {smplxModel.isGenerating ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
+                    <span>正在生成 SMPL-X 模型...</span>
+                  </>
+                ) : smplxModel.isRealModel ? (
+                  <>
+                    <div className="w-2 h-2 rounded-full bg-green-400" />
+                    <span>SMPL-X 真实模型已加载</span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-5 px-1.5 text-[10px]"
+                      onClick={smplxModel.regenerate}
+                    >
+                      <RefreshCw className="w-3 h-3 mr-1" />
+                      重新生成
+                    </Button>
+                  </>
+                ) : smplxModel.error ? (
+                  <>
+                    <div className="w-2 h-2 rounded-full bg-yellow-400" />
+                    <span>模型生成失败，使用预览模式</span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-5 px-1.5 text-[10px]"
+                      onClick={smplxModel.regenerate}
+                    >
+                      <RefreshCw className="w-3 h-3 mr-1" />
+                      重试
+                    </Button>
+                  </>
+                ) : null}
+              </div>
+            )}
           </div>
 
           {/* Controls */}

@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { StepNavigation, AVATAR_CREATION_STEPS } from "@/components/StepNavigation";
 import { AvatarPreview3D } from "@/components/AvatarPreview3D";
+import { useSmplxModel, skinParamsToColor } from "@/hooks/useSmplxModel";
 import { useLocation, useParams } from "wouter";
 import { useState, useEffect } from "react";
 import {
@@ -64,6 +65,15 @@ export default function AvatarFinalRender() {
 
   const avatar = avatarQuery.data;
 
+  // Use SMPL-X model hook for real model generation
+  const smplxModel = useSmplxModel({
+    avatarId,
+    gender: (avatar?.gender as "male" | "female") || "female",
+    existingGlbUrl: avatar?.modelFileUrl || null,
+    skeletonParams: avatar?.skeletonParams as any,
+    skinColor: skinParamsToColor(avatar?.skinParams),
+  });
+
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-50">
@@ -97,7 +107,7 @@ export default function AvatarFinalRender() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div className="lg:sticky lg:top-20 lg:self-start">
             <AvatarPreview3D
-              glbUrl={avatar?.modelFileUrl || undefined}
+              glbUrl={smplxModel.glbUrl || undefined}
               skeletonParams={{ ...(avatar?.skeletonParams as any), height: finalHeight }}
               skinColor={avatar?.skinParams as any}
               gender={avatar?.gender || "female"}

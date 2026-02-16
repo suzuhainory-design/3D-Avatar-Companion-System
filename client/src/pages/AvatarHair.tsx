@@ -8,6 +8,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { StepNavigation, AVATAR_CREATION_STEPS } from "@/components/StepNavigation";
 import { AvatarPreview3D } from "@/components/AvatarPreview3D";
+import { useSmplxModel, skinParamsToColor } from "@/hooks/useSmplxModel";
 import { useLocation, useParams } from "wouter";
 import { useState, useEffect } from "react";
 import { ArrowLeft, Loader2, RotateCcw } from "lucide-react";
@@ -63,6 +64,15 @@ export default function AvatarHair() {
   const saveStepMutation = trpc.avatar.saveStep.useMutation();
 
   const [hair, setHair] = useState<HairParams>(DEFAULT_HAIR);
+
+  // Use SMPL-X model hook for real model generation
+  const smplxModel = useSmplxModel({
+    avatarId,
+    gender: (avatarQuery.data?.gender as "male" | "female") || "female",
+    existingGlbUrl: avatarQuery.data?.modelFileUrl || null,
+    skeletonParams: avatarQuery.data?.skeletonParams as any,
+    skinColor: skinParamsToColor(avatarQuery.data?.skinParams),
+  });
 
   useEffect(() => {
     if (avatarQuery.data?.hairParams) {
@@ -123,7 +133,7 @@ export default function AvatarHair() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div className="lg:sticky lg:top-20 lg:self-start">
             <AvatarPreview3D
-              glbUrl={avatarQuery.data?.modelFileUrl || undefined}
+              glbUrl={smplxModel.glbUrl || undefined}
               skeletonParams={avatarQuery.data?.skeletonParams as any}
               skinColor={avatarQuery.data?.skinParams as any}
               gender={avatarQuery.data?.gender || "female"}

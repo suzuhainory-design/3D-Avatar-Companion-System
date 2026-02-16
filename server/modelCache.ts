@@ -9,7 +9,9 @@
  * 4. LRU：超过存储限额时，淘汰最久未命中的缓存
  */
 
+import { eq, and, asc, sql, lt } from "drizzle-orm";
 import { getDb } from "./db";
+import { modelCache } from "../drizzle/schema";
 import { storagePut, storageGet } from "./storage";
 import { nanoid } from "nanoid";
 
@@ -91,29 +93,27 @@ export async function getCachedModel(
   if (!db) return { hit: false };
 
   try {
-    const rows = await db.execute({
-      sql: `SELECT * FROM model_cache WHERE cacheKey = ? LIMIT 1`,
-      params: [cacheKey],
-    } as any) as any;
+    const rows = await db.select().from(modelCache)
+      .where(eq(modelCache.cacheKey, cacheKey))
+      .limit(1);
 
-    const row = (rows[0] || rows)?.[0];
+    const row = rows[0];
     if (!row) return { hit: false };
 
     // 检查是否过期
     if (row.expiresAt && new Date(row.expiresAt) < new Date()) {
       // 过期，删除缓存
-      await db.execute({
-        sql: `DELETE FROM model_cache WHERE id = ?`,
-        params: [row.id],
-      } as any);
+      await db.delete(modelCache).where(eq(modelCache.id, row.id));
       return { hit: false };
     }
 
     // 更新命中计数
-    await db.execute({
-      sql: `UPDATE model_cache SET hitCount = hitCount + 1, lastHitAt = NOW() WHERE id = ?`,
-      params: [row.id],
-    } as any);
+    await db.update(modelCache)
+      .set({
+        hitCount: sql`${modelCache.hitCount} + 1`,
+        lastHitAt: new Date(),
+      })
+      .where(eq(modelCache.id, row.id));
 
     return {
       hit: true,
@@ -127,7 +127,7 @@ export async function getCachedModel(
         modelUrl: row.modelUrl,
         modelKey: row.modelKey,
         paramsHash: row.paramsHash,
-        paramsSnapshot: typeof row.paramsSnapshot === "string" ? JSON.parse(row.paramsSnapshot) : row.paramsSnapshot,
+        paramsSnapshot: typeof row.paramsSnapshot === "string" ? JSON.parse(row.paramsSnapshot) : row.paramsSnapshot as Record<string, any> | null,
         fileSize: row.fileSize,
         hitCount: row.hitCount + 1,
         lastHitAt: new Date(),
@@ -185,23 +185,24 @@ export async function cacheModel(options: {
     // 先检查是否需要淘汰旧缓存（LRU）
     await evictOldCache(userId);
 
-    // 插入缓存记录（使用 REPLACE 避免重复键冲突）
-    await db.execute({
-      sql: `REPLACE INTO model_cache (cacheKey, userId, avatarId, cacheType, modelUrl, modelKey, paramsHash, paramsSnapshot, fileSize, hitCount, lastHitAt, expiresAt, createdAt)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?, NOW())`,
-      params: [
-        cacheKey,
-        userId,
-        avatarId || null,
-        cacheType,
-        modelUrl,
-        s3Key,
-        paramsHash,
-        JSON.stringify(params),
-        modelData.length,
-        expiresAt,
-      ],
-    } as any);
+    // 先尝试删除已有的相同 cacheKey 的记录
+    await db.delete(modelCache).where(eq(modelCache.cacheKey, cacheKey));
+
+    // 插入新缓存记录
+    await db.insert(modelCache).values({
+      cacheKey,
+      userId,
+      avatarId: avatarId || null,
+      cacheType,
+      modelUrl,
+      modelKey: s3Key,
+      paramsHash,
+      paramsSnapshot: params,
+      fileSize: modelData.length,
+      hitCount: 0,
+      lastHitAt: null,
+      expiresAt,
+    });
   } catch (error) {
     console.warn("[ModelCache] Failed to store cache metadata:", error);
   }
@@ -219,35 +220,44 @@ async function evictOldCache(userId: number): Promise<void> {
 
   try {
     // 统计当前用户的缓存数量
-    const countResult = await db.execute({
-      sql: `SELECT COUNT(*) as cnt FROM model_cache WHERE userId = ?`,
-      params: [userId],
-    } as any) as any;
+    const countResult = await db.select({ cnt: sql<number>`COUNT(*)` })
+      .from(modelCache)
+      .where(eq(modelCache.userId, userId));
 
-    const count = (countResult[0] || countResult)?.[0]?.cnt || 0;
+    const count = countResult[0]?.cnt || 0;
 
     if (count >= MAX_CACHE_PER_USER) {
-      // 删除最久未命中的缓存（保留最新的 MAX_CACHE_PER_USER - 5 条）
+      // 获取需要保留的缓存ID（最近使用的）
       const toKeep = MAX_CACHE_PER_USER - 5;
-      await db.execute({
-        sql: `DELETE FROM model_cache 
-              WHERE userId = ? AND id NOT IN (
-                SELECT id FROM (
-                  SELECT id FROM model_cache 
-                  WHERE userId = ? 
-                  ORDER BY COALESCE(lastHitAt, createdAt) DESC 
-                  LIMIT ${toKeep}
-                ) as keep_ids
-              )`,
-        params: [userId, userId],
-      } as any);
+      const keepRows = await db.select({ id: modelCache.id })
+        .from(modelCache)
+        .where(eq(modelCache.userId, userId))
+        .orderBy(sql`COALESCE(${modelCache.lastHitAt}, ${modelCache.createdAt}) DESC`)
+        .limit(toKeep);
+
+      const keepIds = keepRows.map(r => r.id);
+
+      if (keepIds.length > 0) {
+        // 删除不在保留列表中的缓存
+        const allRows = await db.select({ id: modelCache.id })
+          .from(modelCache)
+          .where(eq(modelCache.userId, userId));
+
+        const toDeleteIds = allRows.map(r => r.id).filter(id => !keepIds.includes(id));
+        for (const id of toDeleteIds) {
+          await db.delete(modelCache).where(eq(modelCache.id, id));
+        }
+      }
     }
 
     // 同时清理所有已过期的缓存
-    await db.execute({
-      sql: `DELETE FROM model_cache WHERE expiresAt IS NOT NULL AND expiresAt < NOW()`,
-      params: [],
-    } as any);
+    await db.delete(modelCache)
+      .where(
+        and(
+          sql`${modelCache.expiresAt} IS NOT NULL`,
+          lt(modelCache.expiresAt, new Date()),
+        )
+      );
   } catch (error) {
     console.warn("[ModelCache] Cache eviction failed:", error);
   }
@@ -266,17 +276,24 @@ export async function invalidateCache(
   if (!db) return 0;
 
   try {
-    let sql = `DELETE FROM model_cache WHERE userId = ? AND avatarId = ?`;
-    const params: any[] = [userId, avatarId];
+    const conditions = [
+      eq(modelCache.userId, userId),
+      eq(modelCache.avatarId, avatarId),
+    ];
 
     if (cacheType) {
-      sql += ` AND cacheType = ?`;
-      params.push(cacheType);
+      conditions.push(eq(modelCache.cacheType, cacheType));
     }
 
-    const result = await db.execute({ sql, params } as any) as any;
-    const affected = result[0]?.affectedRows || result?.affectedRows || 0;
-    return affected;
+    const toDelete = await db.select({ id: modelCache.id })
+      .from(modelCache)
+      .where(and(...conditions));
+
+    for (const row of toDelete) {
+      await db.delete(modelCache).where(eq(modelCache.id, row.id));
+    }
+
+    return toDelete.length;
   } catch (error) {
     console.warn("[ModelCache] Cache invalidation failed:", error);
     return 0;
@@ -298,19 +315,22 @@ export async function getCacheStats(userId: number): Promise<{
   }
 
   try {
-    const rows = await db.execute({
-      sql: `SELECT cacheType, COUNT(*) as cnt, SUM(COALESCE(fileSize, 0)) as totalSize, SUM(hitCount) as totalHits
-            FROM model_cache WHERE userId = ? GROUP BY cacheType`,
-      params: [userId],
-    } as any) as any;
+    const rows = await db.select({
+      cacheType: modelCache.cacheType,
+      cnt: sql<number>`COUNT(*)`,
+      totalSize: sql<number>`SUM(COALESCE(${modelCache.fileSize}, 0))`,
+      totalHits: sql<number>`SUM(${modelCache.hitCount})`,
+    })
+      .from(modelCache)
+      .where(eq(modelCache.userId, userId))
+      .groupBy(modelCache.cacheType);
 
-    const results = rows[0] || rows || [];
     let totalEntries = 0;
     let totalSize = 0;
     let totalHits = 0;
     const byType: Record<string, { count: number; size: number; hits: number }> = {};
 
-    for (const row of results) {
+    for (const row of rows) {
       const count = Number(row.cnt) || 0;
       const size = Number(row.totalSize) || 0;
       const hits = Number(row.totalHits) || 0;
@@ -340,11 +360,15 @@ export async function clearUserCache(userId: number): Promise<number> {
   if (!db) return 0;
 
   try {
-    const result = await db.execute({
-      sql: `DELETE FROM model_cache WHERE userId = ?`,
-      params: [userId],
-    } as any) as any;
-    return result[0]?.affectedRows || result?.affectedRows || 0;
+    const toDelete = await db.select({ id: modelCache.id })
+      .from(modelCache)
+      .where(eq(modelCache.userId, userId));
+
+    for (const row of toDelete) {
+      await db.delete(modelCache).where(eq(modelCache.id, row.id));
+    }
+
+    return toDelete.length;
   } catch (error) {
     console.warn("[ModelCache] Failed to clear user cache:", error);
     return 0;

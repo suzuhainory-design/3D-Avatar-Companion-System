@@ -374,7 +374,10 @@ def export_smplx_to_glb(
     # ---- 组装 GLB ----
     json_str = json.dumps(gltf, separators=(',', ':'), ensure_ascii=False)
     json_bytes = json_str.encode('utf-8')
-    json_bytes = _pad_to_4(json_bytes)
+    # GLB spec requires JSON chunk to be padded with spaces (0x20), not null bytes
+    remainder = len(json_bytes) % 4
+    if remainder > 0:
+        json_bytes += b' ' * (4 - remainder)
 
     # GLB header
     glb_length = 12 + 8 + len(json_bytes) + 8 + len(bin_data)

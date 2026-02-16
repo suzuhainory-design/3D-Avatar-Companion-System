@@ -148,3 +148,12 @@
 - [x] 更新Python微服务配置，指向正确的模型目录
 - [x] 验证Python微服务能正确加载模型文件
 - [x] 更新本地运行文档，说明模型文件已内置
+
+## 真实 SMPL-X 模型替换占位模型
+- [x] 后端：添加tRPC路由调用Python微服务generate-glb端点生成真实SMPL-X GLB
+- [x] 前端：AvatarPreview3D组件支持加载真实GLB模型替代占位几何体
+- [x] 前端：骨架调整页面参数变化时实时调用后端重新生成SMPL-X模型
+- [x] 前端：所有创建步骤页面（上传、骨架、外观、发型、服装、最终渲染、对话）统一使用useSmplxModel Hook
+- [x] 验证真实SMPL-X模型在骨架调整页面的渲染效果（T-pose女性模型成功渲染）
+- [x] 修复GLB JSON chunk padding问题（\x00→空格）
+- [x] 修复modelCache.ts Drizzle ORM查询兼容性问题

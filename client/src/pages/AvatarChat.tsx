@@ -7,6 +7,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { AvatarPreview3D, type AvatarPreview3DHandle } from "@/components/AvatarPreview3D";
 import { TTSControls } from "@/components/TTSControls";
 import { useLipSync, type VisemeTimestamp } from "@/hooks/useLipSync";
+import { useSmplxModel, skinParamsToColor } from "@/hooks/useSmplxModel";
 import { useLocation, useParams } from "wouter";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
@@ -411,6 +412,16 @@ export default function AvatarChat() {
   }, [isSpeaking, lipSync]);
 
   const avatar = avatarQuery.data;
+
+  // Use SMPL-X model hook for real model generation
+  const smplxModel = useSmplxModel({
+    avatarId,
+    gender: (avatar?.gender as "male" | "female") || "female",
+    existingGlbUrl: avatar?.modelFileUrl || null,
+    skeletonParams: avatar?.skeletonParams as any,
+    skinColor: skinParamsToColor(avatar?.skinParams),
+  });
+
   const isLoading = chatWithVoiceMutation.isPending || sendMessageMutation.isPending;
 
   return (
@@ -494,7 +505,7 @@ export default function AvatarChat() {
               <div className="relative">
                 <AvatarPreview3D
                   ref={avatarPreviewRef}
-                  glbUrl={avatar?.modelFileUrl || undefined}
+                  glbUrl={smplxModel.glbUrl || undefined}
                   skeletonParams={avatar?.skeletonParams as any}
                   skinColor={avatar?.skinParams as any}
                   gender={avatar?.gender || "female"}
