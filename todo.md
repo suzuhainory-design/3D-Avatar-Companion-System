@@ -59,8 +59,8 @@
 - [x] 多文件格式支持（txt/md/json/csv/xml/html/pdf/doc/ppt/xlsx/jpg/png/mp3/wav/mp4等）
 - [x] 情绪分析与情绪强度展示
 - [x] 3D数字人动画系统（肢体动作、面部表情）- 框架已搭建
-- [ ] Wav2Lip唇同步（嘴部动作与TTS语音匹配）- 需集成实际Wav2Lip模型
-- [ ] TTS语音合成 - 需集成ElevenLabs/Azure TTS
+- [x] Wav2Lip唇同步（嘴部动作与TTS语音匹配）- 已通过ElevenLabs + MPEG-4 viseme系统实现
+- [x] TTS语音合成 - 已集成ElevenLabs TTS API
 - [x] 对话结束后展示LLM返回消息文本
 
 ## 模块7：实时通信与打断
@@ -83,7 +83,7 @@
 
 ## 下一阶段：核心功能升级
 - [x] 集成Babylon.js真实3D渲染引擎：已将CSS模拟替换为Babylon.js v8.51.2 WebGL2引擎，实现参数化人体模型、骨骼动画和实时变形
-- [ ] 接入TTS语音合成服务：集成ElevenLabs或Azure TTS API，实现数字人语音输出和Wav2Lip唇同步功能
+- [x] 接入TTS语音合成服务：已集成ElevenLabs TTS API，实现完整的文本→语音→viseme→3D唇同步流水线
 - [ ] 集成向量数据库实现长期记忆：接入Pinecone或ChromaDB，将对话历史embedding化存储，让数字人能记住用户偏好并生成个性化回应
 - [x] 为项目仓库添加 .env.example 文件，列出所有必需的环境变量
 
@@ -99,3 +99,15 @@
 - [x] 替换最终渲染页面（AvatarFinalRender）CSS 模拟预览为 Babylon.js 3D 渲染器
 - [x] 实现对话页面 3D 数字人动画系统（表情、肢体动作、唇同步）
 - [x] 编写 Babylon.js 集成相关单元测试（36个测试全部通过）
+
+## ElevenLabs TTS 语音合成与唇形同步集成
+- [x] 后端：创建 ElevenLabs TTS API 集成服务（支持流式音频生成）
+- [x] 后端：实现文本到 viseme 时间轴映射（音素→唇形对照表）
+- [x] 后端：创建 tRPC 路由处理 TTS 请求和 viseme 数据返回
+- [x] 前端：创建音频播放器组件（支持流式播放和打断）
+- [x] 前端：创建唇同步控制器（音频时间轴 → viseme 索引 → morph target 权重）
+- [x] 前端：将唇同步系统与 SMPLXAvatar 3D 动画系统联动
+- [x] 集成：实现 LLM 回复 → TTS → 唇同步 → 3D 动画完整流程
+- [x] 集成：支持对话打断时立即停止音频和动画
+- [x] 编写 TTS 和唇同步相关单元测试（78个测试全部通过）
+- [x] 配置 ElevenLabs API Key 环境变量

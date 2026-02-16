@@ -10,6 +10,7 @@ import { notifyOwner } from "./_core/notification";
 import { storagePut } from "./storage";
 import * as db from "./db";
 import { nanoid } from "nanoid";
+import { synthesizeSpeech, synthesizeSpeechStream, listVoices, validateApiKey, getDefaultVoiceId } from "./tts";
 
 // ========== Avatar Router ==========
 const avatarRouter = router({
@@ -557,6 +558,199 @@ const emotionRouter = router({
     }),
 });
 
+// ========== TTS Router ==========
+const ttsRouter = router({
+  /** 验证 ElevenLabs API Key */
+  validateKey: protectedProcedure.query(async () => {
+    const isValid = await validateApiKey();
+    return { isValid };
+  }),
+
+  /** 获取可用语音列表 */
+  listVoices: protectedProcedure.query(async () => {
+    return listVoices();
+  }),
+
+  /** 合成语音（单次完整返回） */
+  synthesize: protectedProcedure
+    .input(z.object({
+      text: z.string().min(1).max(5000),
+      voiceId: z.string().optional(),
+      language: z.string().optional(),
+      stability: z.number().min(0).max(1).optional(),
+      similarityBoost: z.number().min(0).max(1).optional(),
+    }))
+    .mutation(async ({ input }) => {
+      try {
+        const result = await synthesizeSpeech(input.text, {
+          voiceId: input.voiceId || getDefaultVoiceId(input.language),
+          stability: input.stability,
+          similarityBoost: input.similarityBoost,
+          language: input.language,
+        });
+
+        // Upload audio to S3 for client playback
+        const audioKey = `tts/audio-${nanoid()}.mp3`;
+        const { url: audioUrl } = await storagePut(audioKey, result.audioBuffer, "audio/mpeg");
+
+        return {
+          audioUrl,
+          visemeTimeline: result.visemeTimeline,
+          duration: result.duration,
+          text: result.text,
+        };
+      } catch (error) {
+        console.error("[TTS] Synthesis failed:", error);
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "语音合成失败，请重试",
+        });
+      }
+    }),
+
+  /** 发送消息并获取LLM回复 + TTS语音 + Viseme唇同步数据 */
+  chatWithVoice: protectedProcedure
+    .input(z.object({
+      sessionId: z.number(),
+      content: z.string(),
+      voiceId: z.string().optional(),
+      language: z.string().optional(),
+      attachments: z.array(z.object({
+        url: z.string(),
+        name: z.string(),
+        mimeType: z.string(),
+      })).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const session = await db.getChatSessionById(input.sessionId);
+      if (!session || session.userId !== ctx.user.id) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "对话不存在" });
+      }
+
+      // Save user message
+      await db.createChatMessage({
+        sessionId: input.sessionId,
+        role: "user",
+        content: input.content,
+        attachments: input.attachments || null,
+      });
+
+      // Get conversation history
+      const history = await db.getSessionMessages(input.sessionId, 20);
+
+      // Build LLM messages
+      const llmMessages: any[] = [
+        {
+          role: "system" as const,
+          content: `你是一个友好的3D数字人伴侣。请用自然、有情感的方式回应用户。
+在回复的末尾，请用JSON格式附加情绪分析：
+[EMOTION]{"emotion":"happy|sad|surprised|angry|neutral|thinking|excited","intensity":0.0-1.0,"description":"简短描述"}[/EMOTION]`,
+        },
+      ];
+
+      for (const msg of history) {
+        const msgContent: any[] = [{ type: "text", text: msg.content }];
+        if (msg.attachments) {
+          const attachments = msg.attachments as any[];
+          for (const att of attachments) {
+            if (att.mimeType?.startsWith("image/")) {
+              msgContent.push({ type: "image_url", image_url: { url: att.url } });
+            } else if (att.mimeType?.startsWith("audio/") || att.mimeType === "application/pdf" || att.mimeType?.startsWith("video/")) {
+              msgContent.push({ type: "file_url", file_url: { url: att.url, mime_type: att.mimeType } });
+            }
+          }
+        }
+        llmMessages.push({
+          role: msg.role as any,
+          content: msgContent.length === 1 ? msg.content : msgContent,
+        });
+      }
+
+      // Add current user message
+      const currentContent: any[] = [{ type: "text", text: input.content }];
+      if (input.attachments) {
+        for (const att of input.attachments) {
+          if (att.mimeType?.startsWith("image/")) {
+            currentContent.push({ type: "image_url", image_url: { url: att.url } });
+          } else if (att.mimeType?.startsWith("audio/") || att.mimeType === "application/pdf" || att.mimeType?.startsWith("video/")) {
+            currentContent.push({ type: "file_url", file_url: { url: att.url, mime_type: att.mimeType } });
+          }
+        }
+      }
+      llmMessages.push({
+        role: "user" as const,
+        content: currentContent.length === 1 ? input.content : currentContent,
+      });
+
+      try {
+        // Step 1: Get LLM response
+        const llmResult = await invokeLLM({ messages: llmMessages });
+        const rawContent = typeof llmResult.choices[0]?.message?.content === 'string'
+          ? llmResult.choices[0].message.content
+          : JSON.stringify(llmResult.choices[0]?.message?.content);
+
+        // Parse emotion from response
+        let displayContent = rawContent;
+        let emotionAnalysis = { emotion: "neutral", intensity: 0.5, description: "平静" };
+        const emotionMatch = rawContent.match(/\[EMOTION\]([\s\S]*?)\[\/EMOTION\]/);
+        if (emotionMatch) {
+          try {
+            emotionAnalysis = JSON.parse(emotionMatch[1]);
+            displayContent = rawContent.replace(/\[EMOTION\][\s\S]*?\[\/EMOTION\]/, "").trim();
+          } catch { /* keep defaults */ }
+        }
+
+        // Step 2: Synthesize speech with ElevenLabs
+        let audioUrl: string | null = null;
+        let visemeTimeline: any[] = [];
+        let audioDuration = 0;
+
+        try {
+          const ttsResult = await synthesizeSpeech(displayContent, {
+            voiceId: input.voiceId || getDefaultVoiceId(input.language),
+            language: input.language,
+          });
+
+          // Upload audio to S3
+          const audioKey = `tts/chat-${nanoid()}.mp3`;
+          const uploaded = await storagePut(audioKey, ttsResult.audioBuffer, "audio/mpeg");
+          audioUrl = uploaded.url;
+          visemeTimeline = ttsResult.visemeTimeline;
+          audioDuration = ttsResult.duration;
+        } catch (ttsError) {
+          console.error("[TTS] Voice synthesis failed, continuing without audio:", ttsError);
+          // Continue without audio - text response still works
+        }
+
+        // Step 3: Save assistant message
+        const msgId = await db.createChatMessage({
+          sessionId: input.sessionId,
+          role: "assistant",
+          content: displayContent,
+          emotionAnalysis,
+        });
+
+        return {
+          id: msgId,
+          content: displayContent,
+          emotionAnalysis,
+          audioUrl,
+          visemeTimeline,
+          audioDuration,
+        };
+      } catch (error) {
+        await notifyOwner({
+          title: "TTS对话失败",
+          content: `用户 ${ctx.user.name || ctx.user.openId} 的TTS对话(Session:${input.sessionId})失败: ${error instanceof Error ? error.message : "未知错误"}`,
+        });
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "对话处理失败，请重试",
+        });
+      }
+    }),
+});
+
 // ========== Main Router ==========
 export const appRouter = router({
   system: systemRouter,
@@ -574,6 +768,7 @@ export const appRouter = router({
   file: fileRouter,
   voice: voiceRouter,
   emotion: emotionRouter,
+  tts: ttsRouter,
 });
 
 export type AppRouter = typeof appRouter;
