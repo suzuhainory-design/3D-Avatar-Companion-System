@@ -43,7 +43,9 @@ app.add_middleware(
 )
 
 # ---- 全局配置 ----
-SMPLX_MODEL_DIR = os.environ.get("SMPLX_MODEL_DIR", "/models/smplx")
+# 默认指向项目内置的模型目录（相对于 python_service/ 目录）
+_DEFAULT_MODEL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models", "smplx")
+SMPLX_MODEL_DIR = os.environ.get("SMPLX_MODEL_DIR", _DEFAULT_MODEL_DIR)
 DEVICE = os.environ.get("DEVICE", "cpu")
 TEMP_DIR = Path(tempfile.gettempdir()) / "avatar_service"
 TEMP_DIR.mkdir(parents=True, exist_ok=True)

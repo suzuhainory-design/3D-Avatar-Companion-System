@@ -108,3 +108,7 @@ temp/
 
 # Webdev artifacts (checkpoint zips, migrations, etc.)
 .webdev/
+
+# SMPL-X model weights (too large for git, ~1.9GB)
+# Download from https://smpl-x.is.tue.mpg.de/ and place in python_service/models/smplx/
+python_service/models/

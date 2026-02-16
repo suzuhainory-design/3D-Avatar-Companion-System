@@ -142,3 +142,9 @@
 - [x] 后端：更新数据库schema添加model_cache表
 - [x] 前端：展示模型缓存统计和管理（AvatarMemory页面集成）
 - [x] 编写模型缓存相关单元测试（135个测试全部通过）
+
+## SMPL-X 模型权重文件集成
+- [x] 将用户提供的SMPL-X模型权重文件（MALE/FEMALE/NEUTRAL的npz和pkl）放置到项目目录
+- [x] 更新Python微服务配置，指向正确的模型目录
+- [x] 验证Python微服务能正确加载模型文件
+- [x] 更新本地运行文档，说明模型文件已内置
